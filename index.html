@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stream-Reels | Downloader</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* Custom styles for a sleek, dark aesthetic */
+        :root {
+            --primary: #4f46e5; /* Indigo-600 */
+            --background: #0f172a; /* Slate-900 */
+            --card: #1e293b; /* Slate-800 */
+            --text-light: #f1f5f9; /* Slate-100 */
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--background);
+            color: var(--text-light);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+        .container {
+            max-width: 800px;
+            width: 100%;
+        }
+        /* Custom scrollbar for a dark theme */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1e293b;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #64748b;
+        }
+        /* Spinner animation */
+        .spinner {
+            border-top-color: var(--primary);
+            -webkit-animation: spin 1s linear infinite;
+            animation: spin 1s linear infinite;
+        }
+
+        @-webkit-keyframes spin {
+            0% { -webkit-transform: rotate(0deg); }
+            100% { -webkit-transform: rotate(360deg); }
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Ensure video element fills its container and fits aspect ratio */
+        .video-container video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container p-6 md:p-10 bg-slate-900 rounded-xl shadow-2xl border border-slate-700/50">
+        <header class="text-center mb-10">
+            <h1 class="text-4xl font-extrabold tracking-tight text-indigo-400">
+                Stream-Reels
+            </h1>
+            <p class="mt-2 text-slate-400 text-lg">
+                View & Download Instagram Reels Instantly
+            </p>
+        </header>
+
+        <!-- Input Section -->
+        <div class="flex flex-col md:flex-row gap-4 mb-8">
+            <input type="url" id="instaUrl" placeholder="Paste Instagram Reel URL (must contain /reel/)"
+                   class="flex-grow p-4 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-500 focus:ring-indigo-500 focus:border-indigo-500 shadow-md transition duration-200"
+                   required>
+            <button id="downloadBtn"
+                    class="flex-shrink-0 flex items-center justify-center px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-lg transition duration-200 transform active:scale-95 disabled:opacity-50"
+                    aria-label="Fetch Media">
+                <i data-lucide="download" class="w-5 h-5 mr-2"></i>
+                <span>Fetch Media</span>
+            </button>
+        </div>
+
+        <!-- Feedback Section (Loading/Error/Message) -->
+        <div id="feedback" class="text-center mb-6 min-h-[4rem] flex items-center justify-center">
+            <!-- Initial state -->
+            <p class="text-slate-500 italic" id="initialMessage">
+                Enter an Instagram URL above to view and download media.
+            </p>
+        </div>
+
+        <!-- Results Section -->
+        <div id="resultsContainer" class="grid grid-cols-1 gap-6">
+            <!-- Media items will be injected here -->
+        </div>
+
+    </div>
+
+    <script>
+        // Global variables
+        const API_ENDPOINT = 'https://api.raiden.ovh/insta?url=';
+        const MAX_RETRIES = 5;
+        const TIMEOUT_MS = 10000; // 10 seconds timeout
+
+        // DOM Elements
+        const instaUrlInput = document.getElementById('instaUrl');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const feedbackDiv = document.getElementById('feedback');
+        const resultsContainer = document.getElementById('resultsContainer');
+        const initialMessage = document.getElementById('initialMessage');
+
+        // --- Utility Functions ---
+
+        /**
+         * Clears all feedback and results from the UI.
+         */
+        function clearUI() {
+            feedbackDiv.innerHTML = '';
+            resultsContainer.innerHTML = '';
+        }
+
+        /**
+         * Displays a non-intrusive message in the feedback area.
+         * @param {string} message - The message to display.
+         * @param {string} type - 'success', 'error', or 'info'.
+         */
+        function showFeedback(message, type = 'info') {
+            clearUI();
+            let color, icon;
+
+            switch (type) {
+                case 'error':
+                    color = 'text-red-400 bg-red-900/20 border-red-700';
+                    icon = 'alert-triangle';
+                    break;
+                case 'success':
+                    color = 'text-green-400 bg-green-900/20 border-green-700';
+                    icon = 'check-circle';
+                    break;
+                case 'info':
+                default:
+                    color = 'text-indigo-400 bg-indigo-900/20 border-indigo-700';
+                    icon = 'info';
+                    break;
+            }
+
+            feedbackDiv.innerHTML = `
+                <div class="p-3 w-full border rounded-lg flex items-center ${color}">
+                    <i data-lucide="${icon}" class="w-5 h-5 mr-3 flex-shrink-0"></i>
+                    <p class="text-sm font-medium">${message}</p>
+                </div>
+            `;
+            // Re-render lucide icons
+            lucide.createIcons();
+        }
+
+        /**
+         * Shows the loading spinner.
+         */
+        function showLoading() {
+            clearUI();
+            downloadBtn.disabled = true;
+            downloadBtn.innerHTML = `
+                <div class="w-5 h-5 border-2 border-white border-opacity-30 rounded-full spinner mr-2"></div>
+                Loading...
+            `;
+        }
+
+        /**
+         * Hides the loading spinner and resets the button.
+         */
+        function hideLoading() {
+            downloadBtn.disabled = false;
+            downloadBtn.innerHTML = '<i data-lucide="download" class="w-5 h-5 mr-2"></i><span>Fetch Media</span>';
+            lucide.createIcons();
+        }
+
+        /**
+         * Safely copies text to the clipboard using the older execCommand method.
+         * @param {string} text - The text to copy.
+         */
+        function copyToClipboard(text) {
+            const tempInput = document.createElement('textarea');
+            tempInput.value = text;
+            tempInput.style.position = 'absolute';
+            tempInput.style.left = '-9999px';
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            
+            try {
+                document.execCommand('copy');
+                showFeedback('Link copied to clipboard! You can paste it into your browser to download.', 'success');
+            } catch (err) {
+                showFeedback('Failed to copy link. Please manually copy the link shown below.', 'error');
+            } finally {
+                document.body.removeChild(tempInput);
+            }
+        }
+
+        // --- Core Logic ---
+
+        /**
+         * Fetches media from the external API with retry logic and timeout.
+         * @param {string} url - The Instagram URL.
+         */
+        async function fetchMedia(url) {
+            const encodedUrl = encodeURIComponent(url);
+            const fullUrl = `${API_ENDPOINT}${encodedUrl}`;
+
+            for (let i = 0; i < MAX_RETRIES; i++) {
+                const delay = Math.pow(2, i) * 1000; // Exponential backoff: 1s, 2s, 4s, 8s...
+                if (i > 0) {
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+
+                try {
+                    const controller = new AbortController();
+                    const signal = controller.signal;
+                    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+                    const fetchPromise = fetch(fullUrl, { method: 'GET', signal });
+
+                    const response = await fetchPromise;
+                    clearTimeout(timeoutId); // Clear timeout if fetch succeeds
+
+                    if (!response.ok) {
+                        // Throw a specific error for non-200 responses
+                        throw new Error(`API returned status ${response.status}.`);
+                    }
+
+                    const data = await response.json();
+                    
+                    // Check for a structurally valid response with media
+                    if (data && data.media && data.media.length > 0) {
+                        return data.media; // Success
+                    } else {
+                        // Treat empty/invalid structure as a soft error for retry
+                        throw new Error('API returned successfully but no media was found.');
+                    }
+                } catch (e) {
+                    if (e.name === 'AbortError') {
+                        e.message = 'Request timed out after 10 seconds.';
+                    }
+
+                    if (i === MAX_RETRIES - 1) {
+                        // Last retry failed
+                        console.error('Final API fetch attempt failed:', e);
+                        throw new Error('Could not fetch media. Please check the URL and try again later. (Error: ' + (e.message || 'Network issue') + ')');
+                    }
+                }
+            }
+        }
+
+        /**
+         * Renders the fetched media items into the results container.
+         * @param {Array<Object>} media - Array of media objects from the API.
+         */
+        function displayResults(media) {
+            clearUI();
+            
+            showFeedback(`Successfully found ${media.length} media item(s).`, 'success');
+            
+            media.forEach((item, index) => {
+                const isVideo = item.type === 'video';
+                const card = document.createElement('div');
+                // Updated: Always vertical layout, centered content for all devices
+                card.className = 'bg-slate-800 p-4 rounded-xl shadow-lg border border-slate-700 flex flex-col items-center text-center gap-4';
+                
+                // Determine the media preview element (Video or Image)
+                const mediaPreview = isVideo
+                    ? `
+                        <video controls loop preload="none" poster="${item.thumbnail}" 
+                                class="w-full h-full object-cover rounded-lg" 
+                                onerror="this.src='https://placehold.co/400x600/1e293b/a1a1aa?text=Video+Load+Failed'">
+                            <source src="${item.download}" type="video/mp4">
+                            Your browser does not support the video tag.
+                        </video>
+                      `
+                    : `
+                        <img src="${item.thumbnail}" alt="Media Thumbnail" 
+                            class="w-full h-full object-cover transition-transform duration-300 hover:scale-[1.03]" 
+                            onerror="this.onerror=null; this.src='https://placehold.co/400x600/1e293b/a1a1aa?text=No+Thumbnail'"
+                        >
+                    `;
+
+                const mediaHtml = `
+                    <!-- 1. Title/Header (Item X (type)) - Centered -->
+                    <h3 class="text-xl font-semibold text-indigo-300">Item ${index + 1} (${item.label || item.type})</h3>
+
+                    <!-- 2. Media Preview (Centered, controlled width aspect-[9/16] for Reel aesthetic) -->
+                    <div class="relative w-full max-w-xs sm:max-w-sm aspect-[9/16] overflow-hidden rounded-lg bg-slate-900 flex-shrink-0 video-container">
+                        ${mediaPreview}
+
+                        <!-- Badge for type -->
+                        ${isVideo ? `
+                            <span class="absolute top-2 right-2 p-1.5 bg-red-600/80 text-white text-xs font-bold rounded-full flex items-center z-10">
+                                <i data-lucide="play-circle" class="w-4 h-4 mr-1"></i> REEL/VIDEO
+                            </span>` : `
+                            <span class="absolute top-2 right-2 p-1.5 bg-green-600/80 text-white text-xs font-bold rounded-full flex items-center z-10">
+                                <i data-lucide="image" class="w-4 h-4 mr-1"></i> PHOTO
+                            </span>`}
+                    </div>
+                    
+                    <!-- 3. Actions (Buttons - Centered group, controlled width) -->
+                    <div class="flex flex-col sm:flex-row gap-3 mt-2 w-full max-w-xs sm:max-w-sm">
+                        <a href="${item.download}" download="${isVideo ? 'insta-reel.mp4' : 'insta-media.jpg'}" class="flex-1 flex items-center justify-center p-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition duration-200 transform active:scale-95">
+                            <i data-lucide="download" class="w-5 h-5 mr-2"></i>
+                            Download File
+                        </a>
+                        <button class="copy-btn flex-1 sm:flex-none flex items-center justify-center p-3 bg-slate-700 hover:bg-slate-600 text-slate-300 font-semibold rounded-lg shadow-md transition duration-200 transform active:scale-95"
+                            data-url="${item.download}">
+                            <i data-lucide="copy" class="w-5 h-5 mr-2"></i>
+                            Copy Link
+                        </button>
+                    </div>
+                `;
+
+                card.innerHTML = mediaHtml;
+                resultsContainer.appendChild(card);
+            });
+
+            // Re-render lucide icons and attach copy listeners
+            lucide.createIcons();
+            document.querySelectorAll('.copy-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const urlToCopy = btn.getAttribute('data-url');
+                    copyToClipboard(urlToCopy);
+                });
+            });
+        }
+
+
+        /**
+         * Main download handler.
+         */
+        async function handleDownload() {
+            let url = instaUrlInput.value.trim();
+            if (!url) {
+                showFeedback('Please enter an Instagram URL.', 'error');
+                return;
+            }
+
+            // --- URL Cleaning: Robustly strips all query parameters (like igsh) and hash for security ---
+            let cleanedUrl;
+            try {
+                // Use URL constructor for safe parsing
+                const urlObj = new URL(url);
+                // Use only origin + pathname, stripping query/hash
+                cleanedUrl = urlObj.origin + urlObj.pathname;
+                
+                // Remove trailing slash if present for the cleanest ID look
+                if (cleanedUrl.endsWith('/')) {
+                    cleanedUrl = cleanedUrl.slice(0, -1);
+                }
+            } catch (e) {
+                // If parsing fails (not a valid URL), use the original input for basic checks
+                cleanedUrl = url;
+            }
+            // Use the cleaned URL for subsequent logic
+            url = cleanedUrl;
+            // --- End URL Cleaning ---
+
+
+            // Strict check: Must contain '/reel/'
+            if (!url.includes('/reel/')) {
+                showFeedback('This tool only accepts **Instagram Reel URLs** (URLs containing `/reel/`). Regular posts are not supported.', 'error');
+                return;
+            }
+
+            // Simple protocol check
+            if (!url.startsWith('http')) {
+                showFeedback('The URL must start with http:// or https://', 'error');
+                return;
+            }
+
+            showLoading();
+
+            try {
+                // Pass the cleaned URL to fetchMedia
+                const mediaItems = await fetchMedia(url);
+                displayResults(mediaItems);
+            } catch (error) {
+                // Display the user-friendly error message from fetchMedia
+                showFeedback(error.message, 'error');
+                // Ensure initial message is removed
+                if(initialMessage) initialMessage.style.display = 'none';
+            } finally {
+                hideLoading();
+            }
+        }
+
+
+        // --- Event Listeners and Initialization ---
+
+        downloadBtn.addEventListener('click', handleDownload);
+
+        // Allow pressing Enter key in the input field
+        instaUrlInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                handleDownload();
+            }
+        });
+
+        // Initialize Lucide icons on load (for the initial button icon)
+        document.addEventListener('DOMContentLoaded', () => {
+            lucide.createIcons();
+        });
+
+    </script>
+</body>
+  </html>
